@@ -13,9 +13,27 @@ app.prepare().then(() => {
   const httpServer = createServer(handler);
 
   const io = new Server(httpServer);
+  let onlineUsers = [];
 
   io.on("connection", (socket) => {
-    // ...
+    // add user
+    socket.on("addNewUser", (clerkUser) => {
+      clerkUser &&
+        !onlineUsers.some((user) => user?.userId === clerkUser.id) &&
+        onlineUsers.push({
+          userId: clerkUser.id,
+          socketId: socket.id,
+          profile: clerkUser,
+        });
+
+      io.emit("getUsers", onlineUsers);
+    });
+
+    socket.on("disConnenct", () => {
+      onlineUsers = onlineUsers.filter((user) => user.socketId !== socket.id);
+
+      io.emit("getUsers", onlineUsers);
+    });
   });
 
   httpServer
