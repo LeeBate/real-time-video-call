@@ -1,10 +1,12 @@
+/* eslint-disable react-hooks/set-state-in-effect */
 import { SocketUser } from "@/types";
 import { useUser } from "@clerk/nextjs";
-import { createContext, useContext, useEffect, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useState } from "react";
 import { io, Socket } from "socket.io-client";
 
-// eslint-disable-next-line @typescript-eslint/no-empty-object-type
-interface iSocketContext {}
+interface iSocketContext {
+  onlineUsers?: SocketUser[] | null
+}
 
 export const SocketContext = createContext<iSocketContext | null>(null);
 
@@ -68,7 +70,7 @@ console.log('onlineUsers@@',onlineUsers)
       });
     };
   }, [socket, isSocketConnect, user]);
-  return <SocketContext.Provider value={{}}>{children}</SocketContext.Provider>;
+  return <SocketContext.Provider value={{onlineUsers}}>{children}</SocketContext.Provider>;
 };
 
 export const useSocket = () => {

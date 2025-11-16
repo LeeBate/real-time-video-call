@@ -1,8 +1,9 @@
+import ListOnlineUsers from "@/components/listOnlineUsers";
 
 export default function Home() {
   return (
     <div >
-      Video Call
+      <ListOnlineUsers/>
     </div>
   );
 }
