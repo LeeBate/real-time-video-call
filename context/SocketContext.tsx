@@ -1,4 +1,6 @@
+/* eslint-disable react-hooks/preserve-manual-memoization */
 /* eslint-disable react-hooks/set-state-in-effect */
+import ModalWarning from "@/components/modalWarning";
 import { OnCall, Participants, SocketUser } from "@/types";
 import { useUser } from "@clerk/nextjs";
 import {
@@ -9,11 +11,13 @@ import {
   useState,
 } from "react";
 import { io, Socket } from "socket.io-client";
+import { useModalWarning } from "./ModalContext";
 
 interface iSocketContext {
   onlineUsers?: SocketUser[] | null;
   handleCall: (user: SocketUser) => void;
   onGoingCall?: OnCall | null;
+  localStream?: MediaStream | null;
 }
 
 export const SocketContext = createContext<iSocketContext | null>(null);
@@ -24,6 +28,7 @@ export const SocketContextProvider = ({
   children: React.ReactNode;
 }) => {
   const { user } = useUser();
+  const {openModal} = useModalWarning()
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isSocketConnect, setIsSocketConnect] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<SocketUser[] | null>(null);
@@ -31,10 +36,49 @@ export const SocketContextProvider = ({
   const currentSocketUser = onlineUsers?.find(
     (onlineUsers) => onlineUsers.userId === user?.id
   );
+  const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+
+
+  const getMediaStream = useCallback(async(faceMode?: string) => {
+    if(localStream){
+      return localStream;
+    }
+
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const videoDevices = devices.filter(device => device.kind === 'videoinput');
+
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: true,
+        video: {
+          width: {min: 640, ideal: 1280, max: 1920 },
+          height: {min: 480, ideal: 720, max: 1080 },
+          deviceId: videoDevices.length > 0 ? faceMode : undefined
+        }
+      })
+      setLocalStream(stream);
+      return stream;
+    } catch (error) {
+      console.log("Failed to get the stream", error)
+      setLocalStream(null);
+      return null;
+    }
+  }, [localStream])
 
   const handleCall = useCallback(
     async (user: SocketUser) => {
       if (!currentSocketUser) return;
+
+      const stream = await getMediaStream();
+
+      if(!stream){
+        console.log("No media stream available");
+        openModal({
+          title: 'พบข้อผิดพลาด',
+          description: 'ไม่สามารถเข้าถึงสตรีมมีเดียได้ กรุณาตรวจสอบการอนุญาตใช้งานกล้องและไมโครโฟน',
+        })
+        return;
+      }
 
       const participants = { caller: currentSocketUser, receiver: user };
       setOnGoingCall({
@@ -129,7 +173,7 @@ export const SocketContextProvider = ({
   }, [socket, isSocketConnect, user, onIncomingCall]);
 
   return (
-    <SocketContext.Provider value={{ onlineUsers, handleCall, onGoingCall }}>
+    <SocketContext.Provider value={{ onlineUsers, handleCall, onGoingCall, localStream }}>
       {children}
     </SocketContext.Provider>
   );
