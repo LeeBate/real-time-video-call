@@ -37,7 +37,9 @@ const ModalWarning = ({
           </h3>
 
           <div className="mt-2">
-            <p className="text-sm text-gray-500">{description}</p>
+            <p className="text-sm text-gray-500 whitespace-pre-line">
+              {description}
+            </p>
           </div>
 
           <div className="mt-6 w-full">

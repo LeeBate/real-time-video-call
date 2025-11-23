@@ -1,4 +1,5 @@
 import { User } from "@clerk/nextjs/server"
+import Peer from "simple-peer";
 
 export type SocketUser = {
     userId: string,
@@ -14,4 +15,10 @@ export type OnCall = {
 export type Participants = {
     caller: SocketUser,
     receiver: SocketUser
+}
+
+export type PeerData = {
+    peerConnecction: Peer.Instance,
+    stream: MediaStream | null,
+    partipanUser: SocketUser
 }

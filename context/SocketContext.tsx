@@ -1,7 +1,6 @@
 /* eslint-disable react-hooks/preserve-manual-memoization */
 /* eslint-disable react-hooks/set-state-in-effect */
-import ModalWarning from "@/components/modalWarning";
-import { OnCall, Participants, SocketUser } from "@/types";
+import { OnCall, Participants, PeerData, SocketUser } from "@/types";
 import { useUser } from "@clerk/nextjs";
 import {
   createContext,
@@ -12,12 +11,14 @@ import {
 } from "react";
 import { io, Socket } from "socket.io-client";
 import { useModalWarning } from "./ModalContext";
+import Peer, { SignalData } from "simple-peer";
 
 interface iSocketContext {
   onlineUsers?: SocketUser[] | null;
   handleCall: (user: SocketUser) => void;
   onGoingCall?: OnCall | null;
   localStream?: MediaStream | null;
+  handleJoinCall: (onGoingCall: OnCall) => void;
 }
 
 export const SocketContext = createContext<iSocketContext | null>(null);
@@ -28,7 +29,7 @@ export const SocketContextProvider = ({
   children: React.ReactNode;
 }) => {
   const { user } = useUser();
-  const {openModal} = useModalWarning()
+  const { openModal } = useModalWarning();
   const [socket, setSocket] = useState<Socket | null>(null);
   const [isSocketConnect, setIsSocketConnect] = useState(false);
   const [onlineUsers, setOnlineUsers] = useState<SocketUser[] | null>(null);
@@ -37,33 +38,38 @@ export const SocketContextProvider = ({
     (onlineUsers) => onlineUsers.userId === user?.id
   );
   const [localStream, setLocalStream] = useState<MediaStream | null>(null);
+  const [peer, setPeer] = useState<PeerData | null>(null);
 
+  const getMediaStream = useCallback(
+    async (faceMode?: string) => {
+      if (localStream) {
+        return localStream;
+      }
 
-  const getMediaStream = useCallback(async(faceMode?: string) => {
-    if(localStream){
-      return localStream;
-    }
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(
+          (device) => device.kind === "videoinput"
+        );
 
-    try {
-      const devices = await navigator.mediaDevices.enumerateDevices();
-      const videoDevices = devices.filter(device => device.kind === 'videoinput');
-
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: true,
-        video: {
-          width: {min: 640, ideal: 1280, max: 1920 },
-          height: {min: 480, ideal: 720, max: 1080 },
-          deviceId: videoDevices.length > 0 ? faceMode : undefined
-        }
-      })
-      setLocalStream(stream);
-      return stream;
-    } catch (error) {
-      console.log("Failed to get the stream", error)
-      setLocalStream(null);
-      return null;
-    }
-  }, [localStream])
+        const stream = await navigator.mediaDevices.getUserMedia({
+          audio: true,
+          video: {
+            width: { min: 640, ideal: 1280, max: 1920 },
+            height: { min: 480, ideal: 720, max: 1080 },
+            deviceId: videoDevices.length > 0 ? faceMode : undefined,
+          },
+        });
+        setLocalStream(stream);
+        return stream;
+      } catch (error) {
+        console.log("Failed to get the stream", error);
+        setLocalStream(null);
+        return null;
+      }
+    },
+    [localStream]
+  );
 
   const handleCall = useCallback(
     async (user: SocketUser) => {
@@ -71,12 +77,13 @@ export const SocketContextProvider = ({
 
       const stream = await getMediaStream();
 
-      if(!stream){
+      if (!stream) {
         console.log("No media stream available");
         openModal({
-          title: 'พบข้อผิดพลาด',
-          description: 'ไม่สามารถเข้าถึงสตรีมมีเดียได้ กรุณาตรวจสอบการอนุญาตใช้งานกล้องและไมโครโฟน',
-        })
+          title: "พบข้อผิดพลาด",
+          description:
+            "ไม่สามารถเข้าถึงสตรีมมีเดียได้\n กรุณาตรวจสอบการอนุญาตใช้งานกล้องและไมโครโฟน",
+        });
         return;
       }
 
@@ -109,6 +116,101 @@ export const SocketContextProvider = ({
       });
     },
     [onGoingCall, socket, user]
+  );
+
+  const handleHangup = useCallback(({}) => {}, []);
+
+  const createPeer = useCallback(
+    (stream: MediaStream, initiator: boolean) => {
+      const iceServers: RTCIceServer[] = [
+        {
+          urls: [
+            "stun:stun.l.google.com:19302",
+            "stun:stun1.l.google.com:19302",
+            "stun:stun2.l.google.com:19302",
+            "stun:stun3.l.google.com:19302",
+          ],
+        },
+      ];
+
+      const peer = new Peer({
+        stream,
+        initiator,
+        trickle: true,
+        config: {
+          iceServers,
+        },
+      });
+
+      peer.on("stream", (stream) => {
+        setPeer((prev) => {
+          if (prev) {
+            return { ...prev, stream };
+          }
+
+          return prev;
+        });
+      });
+      peer.on("error", (err) => {
+        console.error("Peer error:", err);
+      });
+      peer.on("close", () => handleHangup({}));
+
+      const rtcPeerConnection: RTCPeerConnection = (peer as any)._pc;
+      rtcPeerConnection.oniceconnectionstatechange = async () => {
+        if (
+          rtcPeerConnection.iceConnectionState === "disconnected" ||
+          rtcPeerConnection.iceConnectionState === "failed"
+        ) {
+          handleHangup({});
+        }
+      };
+      return peer;
+    },
+
+    [onGoingCall, setPeer]
+  );
+  const handleJoinCall = useCallback(
+    async (onGoingCall: OnCall) => {
+      setOnGoingCall((prev) => {
+        if (prev) {
+          return { ...prev, isRinging: false };
+        }
+
+        return prev;
+      });
+
+      const stream = await getMediaStream();
+
+      if (!stream) {
+        openModal({
+          title: "พบข้อผิดพลาด",
+          description:
+            "ไม่สามารถเข้าถึงสตรีมมีเดียได้\nกรุณาตรวจสอบการอนุญาตใช้งานกล้องและไมโครโฟน",
+        });
+        return;
+      }
+
+      const newPeer = createPeer(stream, true);
+
+      setPeer({
+        peerConnecction: newPeer,
+        stream: null,
+        partipanUser: onGoingCall.participants.caller,
+      })
+
+      newPeer.on("signal", (data: SignalData) => {
+        if(socket){
+          socket.emit("webrtcSignal", {
+            sdp: data,
+            onGoingCall,
+            isCaller: false
+
+          })
+        }
+      })
+    },
+    [socket, currentSocketUser]
   );
 
   useEffect(() => {
@@ -173,7 +275,15 @@ export const SocketContextProvider = ({
   }, [socket, isSocketConnect, user, onIncomingCall]);
 
   return (
-    <SocketContext.Provider value={{ onlineUsers, handleCall, onGoingCall, localStream }}>
+    <SocketContext.Provider
+      value={{
+        onlineUsers,
+        handleCall,
+        onGoingCall,
+        localStream,
+        handleJoinCall,
+      }}
+    >
       {children}
     </SocketContext.Provider>
   );
